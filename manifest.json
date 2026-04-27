@@ -1,0 +1,19 @@
+{
+  "name": "COMEX GOLD TRADING",
+  "short_name": "COMEX",
+  "description": "COMEX Gold user app with Firebase-backed KYC, wallet, trade, and support flows.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f9fcff",
+  "theme_color": "#edf4ff",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
