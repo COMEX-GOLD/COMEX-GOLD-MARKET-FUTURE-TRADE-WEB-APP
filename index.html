@@ -1464,6 +1464,16 @@ const firebaseConfig = {
 let app, auth, db;
 try { app=firebase.initializeApp(firebaseConfig); auth=firebase.auth(); db=firebase.firestore(); }
 catch(e){ console.warn('Firebase:',e.message); }
+const EXPLICIT_SIGNOUT_KEY='comexExplicitSignOut';
+async function initAuthPersistence(){
+  if(!auth || !firebase?.auth?.Auth?.Persistence?.LOCAL) return;
+  try{
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+  }catch(e){
+    console.warn('Auth persistence:',e.message);
+  }
+}
+initAuthPersistence();
 
 // ================================================================
 // GUEST CHAT ID
@@ -2123,17 +2133,37 @@ function checkMmPhone(input, flagId){
   flag.style.display=show?'block':'none';
   input.classList.toggle('has-flag',show);
 }
+function showLandingFallbackIfNeeded(){
+  const splash=document.getElementById('appSplash');
+  const mainApp=document.getElementById('mainApp');
+  const landing=document.getElementById('landingScreen');
+  const authScreen=document.getElementById('authScreen');
+  const pending=document.getElementById('pendingScreen');
+  const otp=document.getElementById('otpScreen');
+  const appVisible=mainApp && mainApp.style.display==='block';
+  const authVisible=authScreen && authScreen.style.display==='flex';
+  const pendingVisible=pending && pending.style.display==='flex';
+  const otpVisible=otp && otp.style.display==='flex';
+  if(_authResolved || currentUser || auth?.currentUser || appVisible || authVisible || pendingVisible || otpVisible){
+    if(splash){
+      splash.style.opacity='0';
+      setTimeout(()=>{ if(splash.parentNode)splash.remove(); },400);
+    }
+    return;
+  }
+  if(splash){
+    splash.style.opacity='0';
+    setTimeout(()=>{ if(splash.parentNode)splash.remove(); },400);
+  }
+  if(landing && landing.style.display==='none') goToLanding();
+}
 
 // ================================================================
 // BLACK SCREEN FALLBACK — 5 sec timeout
 // ================================================================
 let _authResolved = false;
 setTimeout(()=>{
-  if(!_authResolved){
-    const splash=document.getElementById('appSplash');
-    if(splash){ splash.style.opacity='0'; setTimeout(()=>{ if(splash.parentNode)splash.remove(); },400); }
-    goToLanding();
-  }
+  showLandingFallbackIfNeeded();
 }, 5000);
 
 // ================================================================
@@ -2148,6 +2178,7 @@ if(auth){
       return;
     }
     if(user){
+      localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
       const removeSplash=()=>{ const s=document.getElementById('appSplash');if(s){s.style.opacity='0';setTimeout(()=>s.remove(),350);} };
       try{
         let snap=await db.collection('users').doc(user.uid).get();
@@ -2292,6 +2323,7 @@ async function doRegister(){
   const btn=document.getElementById('regBtn');
   btn.textContent='Creating...'; btn.disabled=true;
   _registering=true;
+  localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
 
   try{
     const cred=await auth.createUserWithEmailAndPassword(email,pass);
@@ -2319,6 +2351,7 @@ async function doGoogleSignIn(){
   provider.addScope('email');
   provider.addScope('profile');
   _registering=true;
+  localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
   try{
     const result=await auth.signInWithPopup(provider);
     const user=result.user;
@@ -2354,6 +2387,7 @@ async function doLogin(){
 
   const btn=document.getElementById('loginBtn');
   btn.textContent='...'; btn.disabled=true;
+  localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
 
   const digits=phone.replace(/[^0-9]/g,'');
   const email=digits+'@comex.gold.trade';
@@ -2415,6 +2449,7 @@ async function doSignOut(){
   if(chatMetaUnsub){chatMetaUnsub();chatMetaUnsub=null;}
   if(changeReqUnsub){changeReqUnsub();changeReqUnsub=null;}
   updateOtpSupportBadge(0);
+  localStorage.setItem(EXPLICIT_SIGNOUT_KEY,'1');
   if(auth) await auth.signOut();
   currentUser=null;
   goToLanding();
@@ -3274,13 +3309,8 @@ window.addEventListener('DOMContentLoaded',()=>{
       }
     });
   }
-  // Fallback: if Firebase takes too long, hide splash and show landing after 5s
-  setTimeout(()=>{
-    const splash=document.getElementById('appSplash');
-    if(splash){splash.style.opacity='0';setTimeout(()=>{if(splash.parentNode)splash.remove();},400);}
-    const ls=document.getElementById('landingScreen');
-    if(ls && ls.style.display==='none') ls.style.display='block';
-  }, 5000);
+  // Fallback: only reveal landing if auth did not resolve and no active session is visible.
+  setTimeout(showLandingFallbackIfNeeded, 5200);
 });
 </script>
 <!-- KYC PENDING OVERLAY (after submission) -->
