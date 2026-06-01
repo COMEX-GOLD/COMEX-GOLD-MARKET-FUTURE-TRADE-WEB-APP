@@ -1340,13 +1340,13 @@ body.light .wh-lbl,.wallet-hero .wh-lbl{color:rgba(255,255,255,0.75);}
       </div>
     </div>
     <div class="chat-input-row">
-    <input type="file" id="imageUpload" accept="image/*" capture="environment" style="display:none;">
-    <i class="fa-solid fa-camera"
+    <input type="file" id="imageUpload" accept="image/*" style="display:none;">
+    <i class="fa-solid fa-image"
        onclick="document.getElementById('imageUpload').click()"
        style="cursor:pointer;font-size:1.1rem;padding:0 10px;opacity:0.55;flex-shrink:0;display:flex;align-items:center;transition:opacity 0.2s;"
        onmouseenter="this.style.opacity='1'"
        onmouseleave="this.style.opacity='0.55'"
-       title="Send image"></i>
+       title="Send photo"></i>
     <div class="chat-inp" contenteditable="true" id="chatInp">Message...</div>
     <div class="chat-send" onclick="sendMsg()">></div>
 </div>
@@ -3073,7 +3073,11 @@ function startChatListener(uid){
     }
     snap.docs.forEach(doc=>{
       const msg=doc.data()||{};
-      appendChatMsg(msg.text,msg.sender,false,msg.timestamp);
+      if(msg.type==='image' && msg.imageData){
+        appendChatMsg(null,msg.sender,false,msg.timestamp,msg.imageData);
+      } else {
+        appendChatMsg(msg.text,msg.sender,false,msg.timestamp);
+      }
     });
   },e=>console.warn(e));
 }
@@ -3094,16 +3098,19 @@ function formatChatMeta(sender,timestamp){
   if(timestamp?.toDate) return timestamp.toDate().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
   return 'You';
 }
-function appendChatMsg(text,sender,isStatic=false,timestamp=null){
+function appendChatMsg(text,sender,isStatic=false,timestamp=null,imageData=null){
   const msgs=document.getElementById('chatMsgs');if(!msgs)return;
   const div=document.createElement('div');
+  const imgHtml = imageData
+    ? `<img src="${imageData}" alt="Photo" style="max-width:220px;max-height:220px;border-radius:10px;display:block;cursor:pointer;" onclick="this.style.maxWidth=this.style.maxWidth==='none'?'220px':'none'"/>`
+    : `<p>${escH(text||'')}</p>`;
   if(sender==='admin'){
     div.className='msg-row';
-    div.innerHTML=`<img class="msg-av support-avatar" src="${getSupportAvatarSrc()}" alt="COMEX GOLD"><div class="msg-bub"><p ${isStatic?'data-static-greeting="1"':''}>${escH(text)}</p><div class="msg-t">${formatChatMeta(sender,timestamp)}</div></div>`;
+    div.innerHTML=`<img class="msg-av support-avatar" src="${getSupportAvatarSrc()}" alt="COMEX GOLD"><div class="msg-bub" ${imageData?'style="padding:6px;background:transparent;box-shadow:none;"':''}>${isStatic&&!imageData?`<p data-static-greeting="1">${escH(text||'')}</p>`:imgHtml}<div class="msg-t">${formatChatMeta(sender,timestamp)}</div></div>`;
   } else {
     const userName=currentUser?.realName||currentUser?.username||'You';
     div.className='msg-row user-row';
-    div.innerHTML=`<img class="msg-av" src="${getUserAvatarSrc()}" alt="User"><div class="msg-stack"><div class="msg-user-meta"><span>${escH(userName)}</span></div><div class="msg-bub user-bub"><p>${escH(text)}</p><div class="msg-t">${formatChatMeta(sender,timestamp)}</div></div></div>`;
+    div.innerHTML=`<img class="msg-av" src="${getUserAvatarSrc()}" alt="User"><div class="msg-stack"><div class="msg-user-meta"><span>${escH(userName)}</span></div><div class="msg-bub user-bub" ${imageData?'style="padding:6px;background:transparent;box-shadow:none;"':''}>${imgHtml}<div class="msg-t">${formatChatMeta(sender,timestamp)}</div></div></div>`;
   }
   msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;
 }
@@ -3127,16 +3134,44 @@ function closeChat(){
 document.addEventListener('DOMContentLoaded', function () {
     const imgUpload = document.getElementById('imageUpload');
     if (imgUpload) {
-        imgUpload.addEventListener('change', function () {
+        imgUpload.addEventListener('change', async function () {
             const file = this.files[0];
             if (!file || !file.type.startsWith('image/')) return;
-            const reader = new FileReader();
-            reader.onload = function (e) { appendImageMessage(e.target.result); };
-            reader.readAsDataURL(file);
             this.value = '';
+            try {
+                const dataUrl = await compressImageToBase64(file, 800, 0.72);
+                appendImageMessage(dataUrl);
+                await sendImageToFirestore(dataUrl);
+            } catch(err) {
+                console.error('Image send error:', err);
+            }
         });
     }
 });
+
+function compressImageToBase64(file, maxPx, quality) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = reject;
+        reader.onload = function(e) {
+            const img = new Image();
+            img.onerror = reject;
+            img.onload = function() {
+                let w = img.width, h = img.height;
+                if (w > maxPx || h > maxPx) {
+                    if (w > h) { h = Math.round(h * maxPx / w); w = maxPx; }
+                    else { w = Math.round(w * maxPx / h); h = maxPx; }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                resolve(canvas.toDataURL('image/jpeg', quality));
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
 
 function appendImageMessage(dataUrl) {
     const chatMsgs = document.getElementById('chatMsgs');
@@ -3152,6 +3187,25 @@ function appendImageMessage(dataUrl) {
         </div>`;
     chatMsgs.appendChild(msgRow);
     chatMsgs.scrollTop = chatMsgs.scrollHeight;
+}
+
+async function sendImageToFirestore(dataUrl) {
+    const chatId = getActiveChatId();
+    try {
+        await ensureChatThreadMeta();
+        await db.collection('chats').doc(chatId).collection('messages').add({
+            imageData: dataUrl,
+            type: 'image',
+            sender: 'user',
+            ...getChatIdentityMeta(),
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        await ensureChatThreadMeta({
+            lastMsg: '[Photo]',
+            lastMsgAt: firebase.firestore.FieldValue.serverTimestamp(),
+            unreadAdmin: firebase.firestore.FieldValue.increment(1)
+        });
+    } catch(e) { console.error('Firestore image save error:', e); }
 }
 function closeChatOut(e){if(e.target===document.getElementById('chatOverlay'))closeChat();}
 async function sendMsg(){
